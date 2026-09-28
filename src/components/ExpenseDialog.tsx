@@ -1,9 +1,27 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { ArrowDownLeft, ArrowUpRight, Calculator as CalcIcon, Check, PiggyBank, X } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, Calculator as CalcIcon, Check, PiggyBank, Plus, Trash2, X } from 'lucide-react'
 import Calculator from './Calculator'
 import { evaluate, isExpression } from '../lib/calc'
-import { ACCOUNTS, catsFor, defaultNeed, money, todayISO, uid, type AccountId, type CatId, type Goal, type Need, type Tx, type TxType } from '../lib/data'
+import {
+  ACCOUNTS,
+  CAT,
+  CUSTOM_COLOR,
+  CUSTOM_ICONS,
+  catsFor,
+  defaultNeed,
+  money,
+  todayISO,
+  uid,
+  type AccountId,
+  type CatId,
+  type CustomCategory,
+  type CustomIcon,
+  type Goal,
+  type Need,
+  type Tx,
+  type TxType,
+} from '../lib/data'
 
 type Props = {
   open: boolean
@@ -13,8 +31,134 @@ type Props = {
   defaultType?: TxType
   defaultGoalId?: string
   goals: Goal[]
+  onCreateGoal: (name: string, target: number) => Goal
+  onCreateCategory: (c: Omit<CustomCategory, 'id'>) => CustomCategory
+  onRemoveCategory: (id: CatId) => void
+  categoryUse: (id: CatId) => number
   onClose: () => void
   onSave: (t: Tx) => void
+}
+
+const field = 'h-11 w-full rounded-xl border border-line bg-white px-3 outline-none focus:border-leaf'
+
+/* Inline form for a category of your own */
+function NewCategory({ type, onCreate, onCancel }: { type: 'out' | 'in'; onCreate: (c: Omit<CustomCategory, 'id'>) => void; onCancel: () => void }) {
+  const [label, setLabel] = useState('')
+  const [icon, setIcon] = useState<CustomIcon>('tag')
+  const [need, setNeed] = useState<Need>('need')
+  const [error, setError] = useState('')
+  const create = () => {
+    const name = label.trim()
+    if (!name) return setError('Give the category a name.')
+    if (catsFor(type).some((c) => c.label.toLowerCase() === name.toLowerCase())) return setError(`You already have a “${name}” category.`)
+    onCreate({ label: name, type, icon, need: type === 'out' ? need : undefined })
+  }
+  return (
+    <div className="mt-3 rounded-2xl bg-wash p-4">
+      <p className="text-sm font-semibold">New {type === 'out' ? 'spending' : 'income'} category</p>
+      <input
+        autoFocus
+        value={label}
+        onChange={(e) => {
+          setLabel(e.target.value)
+          setError('')
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            create()
+          }
+        }}
+        maxLength={18}
+        placeholder={type === 'out' ? 'Pets, School, Load…' : 'Rental, Allowance…'}
+        aria-label="Category name"
+        className={`${field} mt-2`}
+      />
+      <p className="mt-3 text-xs text-muted">Icon</p>
+      <div role="radiogroup" aria-label="Icon" className="mt-1 grid grid-cols-6 gap-1.5">
+        {(Object.keys(CUSTOM_ICONS) as CustomIcon[]).map((k) => {
+          const Icon = CUSTOM_ICONS[k]
+          const on = icon === k
+          return (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              aria-label={k}
+              onClick={() => setIcon(k)}
+              className={`grid h-10 place-items-center rounded-xl transition-colors ${on ? 'bg-ink text-lime' : 'bg-white text-ink-soft hover:bg-line'}`}
+            >
+              <Icon className="size-4.5" aria-hidden />
+            </button>
+          )
+        })}
+      </div>
+      {type === 'out' && (
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <span className="text-sm text-muted">Usually a</span>
+          <div role="radiogroup" aria-label="Usually a need or want" className="flex rounded-full bg-white p-1">
+            {(['need', 'want'] as const).map((n) => (
+              <button key={n} type="button" role="radio" aria-checked={need === n} onClick={() => setNeed(n)} className={`rounded-full px-3.5 py-1 text-sm font-semibold capitalize transition-colors ${need === n ? 'bg-ink text-white' : 'text-ink-soft'}`}>
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {error && <p className="mt-2 text-sm font-medium text-critical">{error}</p>}
+      <div className="mt-4 flex gap-2">
+        <button type="button" onClick={create} className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-ink text-sm font-semibold text-white hover:bg-note-soft">
+          <Plus className="size-4 text-lime" aria-hidden /> Add category
+        </button>
+        <button type="button" onClick={onCancel} className="h-10 rounded-xl px-4 text-sm font-semibold text-ink-soft hover:bg-line">
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* Inline form for a new savings goal */
+function NewGoal({ onCreate, onCancel, first }: { onCreate: (name: string, target: number) => void; onCancel?: () => void; first: boolean }) {
+  const [name, setName] = useState('')
+  const [target, setTarget] = useState('')
+  const [error, setError] = useState('')
+  const create = () => {
+    const t = evaluate(target)
+    if (!name.trim()) return setError('Give the goal a name.')
+    if (t === null || t <= 0) return setError('Enter how much you want to save, more than ₱0.')
+    onCreate(name.trim(), t)
+  }
+  const onEnter = (e: ReactKeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      create()
+    }
+  }
+  return (
+    <div className="mt-2 rounded-2xl bg-wash p-4">
+      <p className="text-sm font-semibold">{first ? 'Create your first savings goal' : 'New savings goal'}</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_9rem]">
+        <input autoFocus value={name} onChange={(e) => { setName(e.target.value); setError('') }} onKeyDown={onEnter} maxLength={30} placeholder="Emergency fund, New phone…" aria-label="Goal name" className={field} />
+        <span className="relative block">
+          <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted">₱</span>
+          <input value={target} onChange={(e) => { setTarget(e.target.value.replace(/[^\d.,+\-*/x×÷%()−\s]/g, '')); setError('') }} onKeyDown={onEnter} inputMode="decimal" placeholder="Target" aria-label="Target amount" className={`${field} num pl-7`} />
+        </span>
+      </div>
+      {error && <p className="mt-2 text-sm font-medium text-critical">{error}</p>}
+      <div className="mt-3 flex gap-2">
+        <button type="button" onClick={create} className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-ink text-sm font-semibold text-white hover:bg-note-soft">
+          <Plus className="size-4 text-lime" aria-hidden /> Create goal
+        </button>
+        {onCancel && (
+          <button type="button" onClick={onCancel} className="h-10 rounded-xl px-4 text-sm font-semibold text-ink-soft hover:bg-line">
+            Cancel
+          </button>
+        )}
+      </div>
+    </div>
+  )
 }
 
 const TYPES: { id: TxType; label: string; icon: typeof ArrowUpRight; bg: string }[] = [
@@ -23,7 +167,8 @@ const TYPES: { id: TxType; label: string; icon: typeof ArrowUpRight; bg: string 
   { id: 'save', label: 'To savings', icon: PiggyBank, bg: 'bg-note-soft' },
 ]
 
-export default function ExpenseDialog({ open, editing, defaultDate, defaultAmount, defaultType, defaultGoalId, goals, onClose, onSave }: Props) {
+export default function ExpenseDialog({ open, editing, defaultDate, defaultAmount, defaultType, defaultGoalId, goals, onCreateGoal, onCreateCategory, onRemoveCategory, categoryUse, onClose, onSave }: Props) {
+  const [making, setMaking] = useState<'category' | 'goal' | null>(null)
   const [type, setType] = useState<TxType>('out')
   const [need, setNeed] = useState<Need>('need')
   const [goalId, setGoalId] = useState<string | undefined>(undefined)
@@ -49,6 +194,7 @@ export default function ExpenseDialog({ open, editing, defaultDate, defaultAmoun
     setDate(editing?.date ?? defaultDate)
     setError('')
     setCalcOpen(false)
+    setMaking(null)
     setTimeout(() => amountRef.current?.focus(), 60)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editing, defaultDate, defaultAmount, defaultType, defaultGoalId])
@@ -62,6 +208,7 @@ export default function ExpenseDialog({ open, editing, defaultDate, defaultAmoun
 
   const switchType = (t: TxType) => {
     setType(t)
+    setMaking(null)
     setCategory(catsFor(t)[0].id)
     if (t === 'out') setNeed(defaultNeed(catsFor(t)[0].id))
     if (t !== 'out' && account === 'card') setAccount('bank')
@@ -83,7 +230,7 @@ export default function ExpenseDialog({ open, editing, defaultDate, defaultAmoun
       return
     }
     if (type === 'save' && !goalId) {
-      setError('Create a savings goal first, on the Goals tab.')
+      setError('Choose a savings goal, or create one below.')
       return
     }
     onSave({
@@ -104,6 +251,8 @@ export default function ExpenseDialog({ open, editing, defaultDate, defaultAmoun
   const cats = catsFor(type)
   const isIn = type === 'in'
   const isSave = type === 'save'
+  const chosen = CAT[category]
+  const chosenUse = chosen?.custom ? categoryUse(category) : 0
 
   return (
     <AnimatePresence>
@@ -228,8 +377,17 @@ export default function ExpenseDialog({ open, editing, defaultDate, defaultAmoun
             {isSave ? (
               <fieldset className="mt-6">
                 <legend className="text-sm text-muted">Savings goal</legend>
-                {goals.length === 0 ? (
-                  <p className="mt-2 rounded-xl bg-wash p-3 text-sm text-ink-soft">You don’t have a savings goal yet. Create one on the Goals tab, then come back.</p>
+                {goals.length === 0 || making === 'goal' ? (
+                  <NewGoal
+                    first={goals.length === 0}
+                    onCancel={goals.length ? () => setMaking(null) : undefined}
+                    onCreate={(name, target) => {
+                      const g = onCreateGoal(name, target)
+                      setGoalId(g.id)
+                      setMaking(null)
+                      setError('')
+                    }}
+                  />
                 ) : (
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
                     {goals.map((g) => {
@@ -248,6 +406,9 @@ export default function ExpenseDialog({ open, editing, defaultDate, defaultAmoun
                         </button>
                       )
                     })}
+                    <button type="button" onClick={() => setMaking('goal')} className="flex items-center gap-2.5 rounded-xl border-2 border-dashed border-line px-3 py-2.5 text-left text-sm font-semibold text-ink-soft transition-colors hover:border-leaf hover:text-leaf">
+                      <Plus className="size-4" aria-hidden /> New goal
+                    </button>
                   </div>
                 )}
               </fieldset>
@@ -261,7 +422,7 @@ export default function ExpenseDialog({ open, editing, defaultDate, defaultAmoun
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: isIn ? -20 : 20 }}
                   transition={{ duration: 0.2 }}
-                  className={`mt-2 grid gap-2 ${cats.length > 5 ? 'grid-cols-4' : 'grid-cols-5'}`}
+                  className="mt-2 grid grid-cols-4 gap-2"
                 >
                   {cats.map((c) => {
                     const Icon = c.icon
@@ -277,7 +438,7 @@ export default function ExpenseDialog({ open, editing, defaultDate, defaultAmoun
                         <motion.span animate={{ scale: on ? 1.1 : 1, rotate: on ? -6 : 0 }} className="grid size-9 place-items-center rounded-xl text-white" style={{ background: c.color }}>
                           <Icon className="size-4.5" aria-hidden />
                         </motion.span>
-                        {c.label}
+                        <span className="w-full truncate px-0.5">{c.label}</span>
                         {on && (
                           <motion.span layoutId="cat-check" className="absolute top-1.5 right-1.5 grid size-4 place-items-center rounded-full bg-lime text-ink">
                             <Check className="size-3" strokeWidth={3} />
@@ -286,8 +447,57 @@ export default function ExpenseDialog({ open, editing, defaultDate, defaultAmoun
                       </button>
                     )
                   })}
+                  <button
+                    type="button"
+                    onClick={() => setMaking(making === 'category' ? null : 'category')}
+                    aria-expanded={making === 'category'}
+                    className={`flex flex-col items-center gap-1.5 rounded-2xl border-2 border-dashed px-1 py-2.5 text-center text-xs leading-tight font-semibold transition-colors ${making === 'category' ? 'border-leaf text-leaf' : 'border-line text-ink-soft hover:border-leaf hover:text-leaf'}`}
+                  >
+                    <span className="grid size-9 place-items-center rounded-xl bg-wash">
+                      <Plus className={`size-4.5 transition-transform duration-300 ${making === 'category' ? 'rotate-45' : ''}`} aria-hidden />
+                    </span>
+                    New category
+                  </button>
                 </motion.div>
               </AnimatePresence>
+
+              <AnimatePresence initial={false}>
+                {making === 'category' && (
+                  <motion.div key="new-cat" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.3 }} className="overflow-hidden">
+                    <NewCategory
+                      type={isIn ? 'in' : 'out'}
+                      onCancel={() => setMaking(null)}
+                      onCreate={(c) => {
+                        const made = onCreateCategory(c)
+                        setMaking(null)
+                        pickCategory(made.id)
+                      }}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Your own categories can be removed while nothing uses them */}
+              {chosen?.custom && making !== 'category' && (
+                <p className="mt-2 flex flex-wrap items-center gap-x-2 text-xs text-muted">
+                  <span className="inline-block size-2.5 rounded-full" style={{ background: CUSTOM_COLOR }} aria-hidden />
+                  “{chosen.label}” is a category you added.
+                  {chosenUse > 0 ? (
+                    <span>It’s used by {chosenUse} {chosenUse === 1 ? 'item' : 'items'}, so it stays.</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onRemoveCategory(category)
+                        pickCategory(catsFor(type)[0].id)
+                      }}
+                      className="inline-flex items-center gap-1 font-semibold text-critical hover:underline"
+                    >
+                      <Trash2 className="size-3" aria-hidden /> Remove it
+                    </button>
+                  )}
+                </p>
+              )}
 
               {/* Need or want: defaults from the category, can be changed per entry */}
               {type === 'out' && (

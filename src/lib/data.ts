@@ -1,22 +1,34 @@
 import {
+  Baby,
   Banknote,
   Briefcase,
   Bus,
+  Church,
   Clapperboard,
   Coins,
   CreditCard,
+  Dumbbell,
+  Fuel,
+  Gamepad2,
   Gift,
+  GraduationCap,
   HeartPulse,
   House,
   Landmark,
   Laptop,
+  PawPrint,
   PiggyBank,
+  Plane,
   Receipt,
   RotateCcw,
   Shapes,
   ShoppingBag,
   Smartphone,
+  Sparkles,
+  Store,
+  Tag,
   UtensilsCrossed,
+  Wifi,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -27,10 +39,12 @@ export type Need = 'need' | 'want'
 
 /* ---------- Categories: colour follows the category, in the validated slot order ---------- */
 
-export type OutCat = 'food' | 'transport' | 'shopping' | 'bills' | 'health' | 'fun' | 'home' | 'other'
-export type InCat = 'salary' | 'freelance' | 'gift' | 'refund' | 'extra'
+// Categories people add themselves have ids starting with "c-"
+export type CustomCatId = `c-${string}`
+export type OutCat = 'food' | 'transport' | 'shopping' | 'bills' | 'health' | 'fun' | 'home' | 'other' | CustomCatId
+export type InCat = 'salary' | 'freelance' | 'gift' | 'refund' | 'extra' | CustomCatId
 export type CatId = OutCat | InCat | 'savings'
-export type Category = { id: CatId; label: string; icon: LucideIcon; color: string; type: TxType; need?: Need }
+export type Category = { id: CatId; label: string; icon: LucideIcon; color: string; type: TxType; need?: Need; custom?: boolean }
 
 // `need` is the default for new expenses in that category; each entry can override it
 export const CATEGORIES: Category[] = [
@@ -61,6 +75,45 @@ export const CAT: Record<CatId, Category> = Object.fromEntries(ALL_CATEGORIES.ma
 export const catsFor = (t: TxType) => (t === 'out' ? CATEGORIES : t === 'in' ? INCOME_CATEGORIES : [SAVINGS_CATEGORY])
 export const defaultNeed = (c: CatId): Need => CAT[c]?.need ?? 'want'
 
+/* ---------- Custom categories ---------- */
+
+// Icons people can choose from for their own categories
+export const CUSTOM_ICONS = {
+  tag: Tag,
+  paw: PawPrint,
+  baby: Baby,
+  school: GraduationCap,
+  plane: Plane,
+  gym: Dumbbell,
+  fuel: Fuel,
+  wifi: Wifi,
+  game: Gamepad2,
+  church: Church,
+  beauty: Sparkles,
+  business: Store,
+} satisfies Record<string, LucideIcon>
+export type CustomIcon = keyof typeof CUSTOM_ICONS
+export type CustomCategory = { id: CustomCatId; label: string; type: 'out' | 'in'; icon: CustomIcon; need?: Need }
+
+// The eight colours above are the validated palette; extra categories share one neutral
+// colour and are told apart by their name and icon, never by a made-up hue
+export const CUSTOM_COLOR = '#6f8479'
+const BUILTIN_OUT = CATEGORIES.length
+const BUILTIN_IN = INCOME_CATEGORIES.length
+const BUILTIN_ALL = ALL_CATEGORIES.length
+
+/** Adds someone's own categories to the lists every screen reads from */
+export function setCustomCategories(list: CustomCategory[]) {
+  const toCat = (c: CustomCategory): Category => ({ id: c.id, label: c.label, icon: CUSTOM_ICONS[c.icon] ?? Tag, color: CUSTOM_COLOR, type: c.type, need: c.type === 'out' ? (c.need ?? 'want') : undefined, custom: true })
+  const cats = list.map(toCat)
+  CATEGORIES.splice(BUILTIN_OUT, Infinity, ...cats.filter((c) => c.type === 'out'))
+  INCOME_CATEGORIES.splice(BUILTIN_IN, Infinity, ...cats.filter((c) => c.type === 'in'))
+  ALL_CATEGORIES.splice(BUILTIN_ALL, Infinity, ...cats)
+  for (const id of Object.keys(CAT)) if (id.startsWith('c-')) delete CAT[id as CatId]
+  for (const c of cats) CAT[c.id] = c
+}
+export const newCategoryId = (): CustomCatId => `c-${uid()}`
+
 /* ---------- Where the money comes from / goes through ---------- */
 
 export type AccountId = 'cash' | 'card' | 'bank' | 'ewallet'
@@ -89,13 +142,14 @@ export type Tx = {
   goalId?: string // savings only: which goal it went to
   billId?: string // set when created by "Mark paid"
   wishId?: string // set when created by buying a wishlist item
+  sample?: boolean // example data, removable in one go
 }
 
 /* ---------- Bills, goals, wishlist ---------- */
 
-export type Bill = { id: string; name: string; amount: number; dueDay: number; category: OutCat; account: AccountId }
-export type Goal = { id: string; name: string; target: number; deadline?: string; color: string }
-export type Wish = { id: string; name: string; price: number; need: Need; category: OutCat; month: string; goalId?: string; boughtTxId?: string }
+export type Bill = { id: string; name: string; amount: number; dueDay: number; category: OutCat; account: AccountId; sample?: boolean }
+export type Goal = { id: string; name: string; target: number; deadline?: string; color: string; sample?: boolean }
+export type Wish = { id: string; name: string; price: number; need: Need; category: OutCat; month: string; goalId?: string; boughtTxId?: string; sample?: boolean }
 
 // Goals are identified by name and icon; these colours are only a small accent
 export const GOAL_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948']
@@ -316,6 +370,7 @@ export function loadBooks(opts: { withSample?: boolean; adoptLegacy?: boolean } 
   save(goalsKey(personal.id), sample.goals)
   save(wishKey(personal.id), sample.wishes)
   save(nsKey('books'), [personal])
+  if (opts.withSample) save(sampleNoticeKey(), 'intro')
   return { books: [personal], activeId: personal.id }
 }
 
@@ -446,6 +501,42 @@ export function sampleData(): { txs: Tx[]; bills: Bill[]; goals: Goal[]; wishes:
     { id: uid(), name: 'Dental cleaning', price: 1500, need: 'need', category: 'health', month: thisMonth },
     { id: uid(), name: 'Siargao flights', price: 9800, need: 'want', category: 'fun', month: shiftMonth(thisMonth, 2), goalId: 'goal-trip' },
   ]
-  return { txs: out, bills: SAMPLE_BILLS, goals: SAMPLE_GOALS, wishes }
+  const mark = <T,>(list: T[]) => list.map((x) => ({ ...x, sample: true }))
+  return { txs: mark(out), bills: mark(SAMPLE_BILLS), goals: mark(SAMPLE_GOALS), wishes: mark(wishes) }
+}
+
+/* ---------- The "this is example data" notice ---------- */
+
+// 'intro' shows the welcome message once; 'banner' keeps a small reminder until the data is gone
+export type SampleNotice = 'intro' | 'banner' | 'off'
+export const sampleNoticeKey = () => nsKey('sample-notice')
+
+type Bundle = { txs: Tx[]; bills: Bill[]; goals: Goal[]; wishes: Wish[] }
+
+/** Finds sample data saved by earlier versions (before it was marked) and marks it; null when there is none */
+export function markOldSample(d: Bundle): Bundle | null {
+  const billIds = new Set(SAMPLE_BILLS.map((b) => b.id))
+  const goalIds = new Set(SAMPLE_GOALS.map((g) => g.id))
+  if (!d.bills.some((b) => billIds.has(b.id) && !b.sample) && !d.goals.some((g) => goalIds.has(g.id) && !g.sample)) return null
+  const notes = new Set([...SAMPLES.map((s) => s[1]), ...INCOME.map((i) => i[2]), 'Website project'])
+  const wishNames = new Set(['MacBook Air M4', 'Running shoes', 'Dental cleaning', 'Siargao flights'])
+  const isSampleTx = (t: Tx) => (t.billId && billIds.has(t.billId)) || (t.goalId && goalIds.has(t.goalId) && t.amount > 0) || notes.has(t.note)
+  return {
+    txs: d.txs.map((t) => (isSampleTx(t) ? { ...t, sample: true } : t)),
+    bills: d.bills.map((b) => (billIds.has(b.id) ? { ...b, sample: true } : b)),
+    goals: d.goals.map((g) => (goalIds.has(g.id) ? { ...g, sample: true } : g)),
+    wishes: d.wishes.map((w) => (wishNames.has(w.name) ? { ...w, sample: true } : w)),
+  }
+}
+
+/** Removes everything marked as sample data; links from your own items to sample goals are cleared */
+export function withoutSample(d: Bundle): Bundle {
+  const gone = new Set(d.goals.filter((g) => g.sample).map((g) => g.id))
+  return {
+    txs: d.txs.filter((t) => !t.sample),
+    bills: d.bills.filter((b) => !b.sample),
+    goals: d.goals.filter((g) => !g.sample),
+    wishes: d.wishes.filter((w) => !w.sample).map((w) => (w.goalId && gone.has(w.goalId) ? { ...w, goalId: undefined } : w)),
+  }
 }
 export const sampleTransactions = () => sampleData().txs

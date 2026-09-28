@@ -13,6 +13,7 @@ import Bills from './components/Bills'
 import Goals from './components/Goals'
 import ExpenseDialog from './components/ExpenseDialog'
 import ImportDialog from './components/ImportDialog'
+import SampleNotice from './components/SampleNotice'
 import Calculator from './components/Calculator'
 import CoinFlight, { type Flight } from './components/CoinFlight'
 import Toast, { type ToastMsg } from './components/Toast'
@@ -25,8 +26,16 @@ import {
   bookKey,
   daysInMonth,
   defaultNeed,
+  GOAL_COLORS,
   goalSaved,
   goalsKey,
+  markOldSample,
+  newCategoryId,
+  sampleNoticeKey,
+  setCustomCategories,
+  withoutSample,
+  type CustomCategory,
+  type SampleNotice as NoticeState,
   inRange,
   load,
   loadBooks,
@@ -171,11 +180,28 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
   const [activeId, setActiveId] = useState(initial.activeId)
   const book = books.find((b) => b.id === activeId) ?? books[0]
 
-  const [txs, setTxs] = useState<Tx[]>(() => loadTx(book.id))
-  const [bills, setBills] = useState<Bill[]>(() => load(billsKey(book.id), []))
-  const [goals, setGoals] = useState<Goal[]>(() => load(goalsKey(book.id), []))
-  const [wishes, setWishes] = useState<Wish[]>(() => load(wishKey(book.id), []))
+  const [start] = useState(() => {
+    const d = { txs: loadTx(book.id), bills: load<Bill[]>(billsKey(book.id), []), goals: load<Goal[]>(goalsKey(book.id), []), wishes: load<Wish[]>(wishKey(book.id), []) }
+    const saved = load<NoticeState | null>(sampleNoticeKey(), null)
+    if (saved) return { ...d, notice: saved }
+    // Sample data saved before it was marked as such gets marked now
+    const marked = markOldSample(d)
+    return marked ? { ...marked, notice: 'intro' as const } : { ...d, notice: 'off' as const }
+  })
+  const [txs, setTxs] = useState<Tx[]>(start.txs)
+  const [bills, setBills] = useState<Bill[]>(start.bills)
+  const [goals, setGoals] = useState<Goal[]>(start.goals)
+  const [wishes, setWishes] = useState<Wish[]>(start.wishes)
   const loadedFor = useRef(book.id)
+
+  // "This is example data" message: shown once on first open, then as a small reminder
+  const [notice, setNotice] = useState<NoticeState>(start.notice)
+  useEffect(() => save(sampleNoticeKey(), notice), [notice])
+
+  // This person's own categories, shared by all their books
+  const [customCats, setCustomCats] = useState<CustomCategory[]>(() => load(nsKey('categories'), []))
+  setCustomCategories(customCats)
+  useEffect(() => save(nsKey('categories'), customCats), [customCats])
 
   // Switching books loads that book's data; everything saves automatically as it changes
   useEffect(() => {
@@ -352,6 +378,74 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
     })
   }
 
+  /* ---------- Example data ---------- */
+
+  const deleteSample = () => {
+    const before = { txs, bills, goals, wishes, notice }
+    const clean = withoutSample({ txs, bills, goals, wishes })
+    setTxs(clean.txs)
+    setBills(clean.bills)
+    setGoals(clean.goals)
+    setWishes(clean.wishes)
+    setNotice('off')
+    // Sample data only ever goes into one book, but clear any others too
+    for (const b of books) {
+      if (b.id === book.id) continue
+      const other = withoutSample({ txs: loadTx(b.id), bills: load(billsKey(b.id), []), goals: load(goalsKey(b.id), []), wishes: load(wishKey(b.id), []) })
+      save(bookKey(b.id), other.txs)
+      save(billsKey(b.id), other.bills)
+      save(goalsKey(b.id), other.goals)
+      save(wishKey(b.id), other.wishes)
+    }
+    setDir(0)
+    setTab('overview')
+    notify('Example data deleted. You’re starting fresh.', () => {
+      setTxs(before.txs)
+      setBills(before.bills)
+      setGoals(before.goals)
+      setWishes(before.wishes)
+      setNotice(before.notice === 'intro' ? 'banner' : before.notice)
+    })
+  }
+
+  const loadSample = () => {
+    const s = sampleData()
+    // Replaces earlier examples, keeps everything you added yourself
+    setTxs((l) => [...l.filter((t) => !t.sample), ...s.txs])
+    setBills((l) => [...l.filter((b) => !b.sample), ...s.bills])
+    setGoals((l) => [...l.filter((g) => !g.sample), ...s.goals])
+    setWishes((l) => [...l.filter((w) => !w.sample), ...s.wishes])
+    setNotice('banner')
+    notify('Example data added')
+  }
+
+  /* ---------- Your own categories and goals, created from the add form ---------- */
+
+  const createCategory = (c: Omit<CustomCategory, 'id'>) => {
+    const made: CustomCategory = { ...c, id: newCategoryId() }
+    const next = [...customCats, made]
+    setCustomCategories(next) // so the form can show it straight away
+    setCustomCats(next)
+    return made
+  }
+  const categoryUse = (id: CatId) =>
+    txs.filter((t) => t.category === id).length +
+    bills.filter((b) => b.category === id).length +
+    wishes.filter((w) => w.category === id).length +
+    books.filter((b) => b.id !== book.id).reduce((n, b) => n + loadTx(b.id).filter((t) => t.category === id).length, 0)
+  const removeCategory = (id: CatId) => {
+    const next = customCats.filter((c) => c.id !== id)
+    setCustomCategories(next)
+    setCustomCats(next)
+  }
+
+  const createGoal = (name: string, target: number) => {
+    const g: Goal = { id: uid(), name, target, color: GOAL_COLORS[goals.length % GOAL_COLORS.length] }
+    setGoals((gs) => [...gs, g])
+    notify(`“${name}” goal created`)
+    return g
+  }
+
   /* ---------- Books ---------- */
 
   const createBook = (name: string) => {
@@ -485,6 +579,8 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
           )}
         </nav>
 
+        <SampleNotice state={notice} onDelete={deleteSample} onKeep={() => setNotice('banner')} onHide={() => setNotice('off')} />
+
         {/* Page content: slides sideways between periods, fades between tabs */}
         <AnimatePresence mode="wait" initial={false} custom={dir}>
           <motion.main
@@ -541,20 +637,15 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
         <footer className="mt-12 flex flex-col items-center justify-between gap-3 text-sm text-cream/55 sm:flex-row">
           <p>{user ? `Signed in as ${user.name}. ` : ''}Everything saves automatically on this device.</p>
           <div className="flex gap-4">
-            <button
-              type="button"
-              onClick={() => {
-                const s = sampleData()
-                setTxs(s.txs)
-                setBills(s.bills)
-                setGoals(s.goals)
-                setWishes(s.wishes)
-                notify('Sample data loaded')
-              }}
-              className="underline-offset-2 hover:text-white hover:underline"
-            >
-              Load sample data
-            </button>
+            {txs.some((t) => t.sample) || bills.some((b) => b.sample) || goals.some((g) => g.sample) ? (
+              <button type="button" onClick={deleteSample} className="underline-offset-2 hover:text-white hover:underline">
+                Delete example data
+              </button>
+            ) : (
+              <button type="button" onClick={loadSample} className="underline-offset-2 hover:text-white hover:underline">
+                Show example data
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -583,6 +674,10 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
         defaultGoalId={dialog?.goalId}
         defaultDate={isCurrent ? todayISO() : range.start}
         goals={goals}
+        onCreateGoal={createGoal}
+        onCreateCategory={createCategory}
+        onRemoveCategory={removeCategory}
+        categoryUse={categoryUse}
         onClose={() => setDialog(null)}
         onSave={saveTx}
       />
