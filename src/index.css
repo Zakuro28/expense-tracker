@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif;
+
+  /* Banknote green page */
+  --color-note: #0c3a2b;
+  --color-note-deep: #082a1f;
+  --color-note-soft: #155240;
+  --color-cream: #eef5ec;
+
+  /* Cards */
+  --color-card: #fbfcf8;
+  --color-ink: #0f2a1f;
+  --color-ink-soft: #3f5a4d;
+  --color-muted: #6d8278;
+  --color-line: #e2eadf;
+  --color-wash: #f0f5ee;
+
+  /* Accents */
+  --color-lime: #c9f26b;
+  --color-leaf: #1f7a4f;
+  --color-gold: #e9c46a;
+
+  /* Status (reserved; always with an icon + label) */
+  --color-critical: #d03b3b;
+  --color-warning: #fab219;
+
+  /* Categories, fixed order (validated palette) */
+  --color-c1: #2a78d6;
+  --color-c2: #eb6834;
+  --color-c3: #1baf7a;
+  --color-c4: #eda100;
+  --color-c5: #e87ba4;
+  --color-c6: #008300;
+  --color-c7: #4a3aa7;
+  --color-c8: #e34948;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  background: var(--color-note-deep);
+}
+
+body {
+  min-height: 100dvh;
+  font-family: var(--font-sans);
+  color: var(--color-cream);
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(201, 242, 107, 0.14), transparent 60%),
+    radial-gradient(900px 700px at -10% 30%, rgba(21, 82, 64, 0.9), transparent 60%),
+    linear-gradient(180deg, var(--color-note) 0%, var(--color-note-deep) 100%);
+  background-attachment: fixed;
+}
+
+::selection {
+  background: var(--color-lime);
+  color: var(--color-note);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-lime);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+.card :focus-visible {
+  outline-color: var(--color-leaf);
+}
+/* Text fields show focus with their own border/underline */
+input:focus-visible {
+  outline: none;
+}
+
+/* Lining figures; this face's tabular set looks typewriter-like, so amounts align by right edge instead */
+.num {
+  font-variant-numeric: lining-nums;
+}
+
+.card {
+  background: var(--color-card);
+  color: var(--color-ink);
+  border-radius: 28px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 30px 60px -30px rgba(2, 20, 12, 0.55);
+}
+
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+.guilloche {
+  animation: turn 240s linear infinite;
+}
+@keyframes turn {
+  to { rotate: 360deg; }
+}
+
+/* A soft light that runs along the budget bar */
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.55) 50%, transparent 70%);
+  transform: translateX(-100%);
+  animation: shimmer 3.2s ease-in-out 1.8s infinite;
+}
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  45%, 100% { transform: translateX(100%); }
+}
+
+/* Freshly added row: lime wash that fades out */
+.just-added {
+  animation: fresh 2.2s ease-out;
+}
+@keyframes fresh {
+  0%, 25% { background: rgba(201, 242, 107, 0.55); }
+  100% { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .guilloche, .shimmer::after, .just-added { animation: none; }
+}
