@@ -18,7 +18,7 @@ import {
 
 const OUT = '#1f7a4f'
 const IN = '#eda100'
-const H = 250
+const MIN_H = 250
 const TOP = 12
 const BOTTOM = 26
 const LEFT = 42
@@ -90,20 +90,28 @@ function bar(x: number, base: number, w: number, h: number) {
 export default function PeriodChart({ period, anchor, txs, budgetPerBucket, onPick }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(640)
+  const [H, setH] = useState(MIN_H)
   const [hover, setHover] = useState<number | null>(null)
-  const [showIn, setShowIn] = useState(true)
+  // Money in starts hidden: big salary days would dwarf everyday spending
+  const [showIn, setShowIn] = useState(false)
 
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return
-    const ro = new ResizeObserver(([e]) => setWidth(e.contentRect.width))
+    // The chart grows to fill its card, so there's no empty space under it
+    const ro = new ResizeObserver(([e]) => {
+      setWidth(e.contentRect.width)
+      setH(Math.max(MIN_H, Math.floor(e.contentRect.height)))
+    })
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
 
   const buckets = useMemo(() => buildBuckets(period, anchor, txs), [period, anchor, txs])
   const max = Math.max(...buckets.map((b) => Math.max(b.out, showIn ? b.in : 0)), (budgetPerBucket ?? 0) * 1.2, 1)
-  const step = [250, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000].find((s) => max / s <= 4) ?? 200000
+  // A round step (1, 2, 2.5 or 5 × a power of ten) giving at most four gridlines, at any size
+  const mag = 10 ** Math.floor(Math.log10(max / 4))
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => max / s <= 4) ?? 10 * mag
   const top = Math.ceil(max / step) * step
   const ticks = [0, top / 2, top]
 
@@ -130,7 +138,7 @@ export default function PeriodChart({ period, anchor, txs, budgetPerBucket, onPi
             <span className="size-2.5 rounded-sm" style={{ background: OUT }} aria-hidden /> Money out
           </span>
           <button type="button" onClick={() => setShowIn((v) => !v)} aria-pressed={showIn} className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 transition-opacity hover:bg-wash ${showIn ? '' : 'opacity-45'}`}>
-            <span className="size-2.5 rounded-sm" style={{ background: IN }} aria-hidden /> Money in
+            <span className="size-2.5 rounded-sm" style={{ background: IN }} aria-hidden /> {showIn ? 'Money in' : 'Show money in'}
           </button>
           {budgetPerBucket !== null && (
             <span className="hidden items-center gap-1.5 text-muted sm:flex">
@@ -141,8 +149,8 @@ export default function PeriodChart({ period, anchor, txs, budgetPerBucket, onPi
         </div>
       </div>
 
-      <div ref={wrapRef} className="relative mt-5" onMouseLeave={() => setHover(null)}>
-        <svg width={width} height={H} className="block overflow-visible" role="img" aria-label={`${title}: money in and out`}>
+      <div ref={wrapRef} className="relative mt-5 min-h-[250px] flex-1" onMouseLeave={() => setHover(null)}>
+        <svg width={width} height={H} className="absolute inset-x-0 top-0 block overflow-visible" role="img" aria-label={`${title}: ${showIn ? 'money in and out' : 'money out'}`}>
           {ticks.map((t) => (
             <g key={t}>
               <line x1={LEFT} x2={width} y1={y(t)} y2={y(t)} stroke={t === 0 ? '#c3cfc6' : '#e8eee6'} strokeWidth={1} />

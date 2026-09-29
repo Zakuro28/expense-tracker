@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { BookOpen, Calculator, Check, ChevronDown, Download, FileSpreadsheet, FolderPlus, LogIn, LogOut, Pencil, Trash2, Upload, UserPlus, UserRound, UserX, Wrench } from 'lucide-react'
+import { BookOpen, Calculator, Check, ChevronDown, Download, FileSpreadsheet, FolderPlus, LogIn, LogOut, Pencil, Tags, Trash2, Upload, UserPlus, UserRound, UserX, Wrench } from 'lucide-react'
 import type { Book } from '../lib/data'
 import type { PublicUser } from '../lib/auth'
 
@@ -119,7 +119,7 @@ export function BookSwitcher({ books, activeId, onSwitch, onCreate, onRename, on
   )
 }
 
-export function ToolsMenu({ onCalculator, onExportPeriod, onExportAll, onImport, periodLabel }: { onCalculator: () => void; onExportPeriod: () => void; onExportAll: () => void; onImport: () => void; periodLabel: string }) {
+export function ToolsMenu({ onCalculator, onCategories, onExportPeriod, onExportAll, onImport, periodLabel }: { onCalculator: () => void; onCategories: () => void; onExportPeriod: () => void; onExportAll: () => void; onImport: () => void; periodLabel: string }) {
   return (
     <Popover
       label="Tools"
@@ -133,6 +133,9 @@ export function ToolsMenu({ onCalculator, onExportPeriod, onExportAll, onImport,
         <>
           <button type="button" role="menuitem" onClick={() => { onCalculator(); close() }} className={item}>
             <Calculator className="size-4 text-leaf" aria-hidden /> Calculator
+          </button>
+          <button type="button" role="menuitem" onClick={() => { onCategories(); close() }} className={item}>
+            <Tags className="size-4 text-leaf" aria-hidden /> Manage categories
           </button>
           <div className="my-1 border-t border-line" />
           <p className="px-3 pt-1 pb-1 text-xs text-muted">Excel</p>

@@ -142,6 +142,7 @@ export type Tx = {
   goalId?: string // savings only: which goal it went to
   billId?: string // set when created by "Mark paid"
   wishId?: string // set when created by buying a wishlist item
+  goalFunded?: number // expenses only: the part paid from a savings goal, which the budget already set aside
   sample?: boolean // example data, removable in one go
 }
 
@@ -272,7 +273,21 @@ const pesoWhole = new Intl.NumberFormat('en-PH', { style: 'currency', currency: 
 
 export const money = (n: number) => peso.format(n)
 export const moneyWhole = (n: number) => pesoWhole.format(Math.round(n))
-export const moneyShort = (n: number) => (n >= 1000 ? `₱${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `₱${Math.round(n)}`)
+// Short labels for chart axes: ₱950, ₱1.5k, ₱40k, ₱2.5M, ₱1.2B
+export function moneyShort(n: number) {
+  const a = Math.abs(n)
+  const fmt = (v: number, unit: string) => `₱${v >= 10 ? Math.round(v) : Number(v.toFixed(1))}${unit}`
+  if (a >= 1e9) return fmt(n / 1e9, "B")
+  if (a >= 1e6) return fmt(n / 1e6, "M")
+  if (a >= 1e3) return fmt(n / 1e3, "k")
+  return `₱${Math.round(n)}`
+}
+
+/** The largest amount one entry can hold; anything bigger is almost always a typo */
+export const MAX_AMOUNT = 10_000_000
+
+/** Longest name for a category someone adds themselves */
+export const CATEGORY_NAME_MAX = 24
 
 export const sum = (list: Tx[], type?: TxType) => list.reduce((s, t) => (!type || t.type === type ? s + t.amount : s), 0)
 
@@ -395,6 +410,45 @@ export function billStatuses(bills: Bill[], txs: Tx[], month: string): BillStatu
 }
 
 export const goalSaved = (goalId: string, txs: Tx[]) => txs.reduce((s, t) => (t.type === 'save' && t.goalId === goalId ? s + t.amount : s), 0)
+/** Money taken back out of a goal to pay for things */
+export const goalUsed = (goalId: string, txs: Tx[]) => txs.reduce((s, t) => (t.type === 'save' && t.goalId === goalId && t.amount < 0 ? s - t.amount : s), 0)
+
+/* ---------- Totals that keep savings and goal-funded purchases honest ---------- */
+
+/** Spending that counts against the budget: goal-funded parts were set aside earlier */
+export const budgetSpend = (txs: Tx[]) => txs.reduce((s, t) => (t.type === 'out' ? s + t.amount - Math.min(t.goalFunded ?? 0, t.amount) : s), 0)
+/** Money put into goals (withdrawals don't undo this period's saving) */
+export const savedInto = (txs: Tx[]) => txs.reduce((s, t) => (t.type === 'save' && t.amount > 0 ? s + t.amount : s), 0)
+/** Money taken back out of goals */
+export const takenFromGoals = (txs: Tx[]) => txs.reduce((s, t) => (t.type === 'save' && t.amount < 0 ? s - t.amount : s), 0)
+
+/** Wishlist items planned for a month and not bought yet, minus what linked goals already hold */
+export function wishlistReserve(wishes: Wish[], goals: Goal[], txs: Tx[], month: string) {
+  const balance = new Map(goals.map((g) => [g.id, Math.max(goalSaved(g.id, txs), 0)]))
+  let total = 0
+  const byCategory: Partial<Record<CatId, number>> = {}
+  for (const w of wishes.filter((x) => x.month === month && !x.boughtTxId)) {
+    const fromGoal = w.goalId ? Math.min(balance.get(w.goalId) ?? 0, w.price) : 0
+    if (w.goalId) balance.set(w.goalId, (balance.get(w.goalId) ?? 0) - fromGoal)
+    const own = w.price - fromGoal
+    total += own
+    byCategory[w.category] = (byCategory[w.category] ?? 0) + own
+  }
+  return { total, byCategory }
+}
+
+/** What goals with a target date need saved each month to get there */
+export function goalsMonthlyNeed(goals: Goal[], txs: Tx[], month: string) {
+  const [y, m] = month.split("-").map(Number)
+  return goals.reduce((sum, g) => {
+    if (!g.deadline) return sum
+    const [dy, dm] = g.deadline.split("-").map(Number)
+    const monthsLeft = (dy - y) * 12 + (dm - m) + 1
+    // Money already spent on what the goal was for still counts as reached
+    const left = g.target - Math.max(goalSaved(g.id, txs) + goalUsed(g.id, txs), 0)
+    return monthsLeft > 0 && left > 0 ? sum + left / monthsLeft : sum
+  }, 0)
+}
 
 /* ---------- Sample data: the last 12 months up to today ---------- */
 

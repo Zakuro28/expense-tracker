@@ -1,13 +1,16 @@
 import { useState } from 'react'
 import { motion } from 'motion/react'
-import { Check, ClipboardList, PiggyBank, Scale, TriangleAlert } from 'lucide-react'
+import { Check, ClipboardList, Gift, PiggyBank, Scale, Target, TriangleAlert } from 'lucide-react'
 import AnimatedMoney from './AnimatedMoney'
-import { CATEGORIES, money, moneyWhole, monthName, type Book, type OutCat, type Tx } from '../lib/data'
+import { CATEGORIES, goalsMonthlyNeed, money, moneyWhole, monthKey, monthName, savedInto, takenFromGoals, todayISO, wishlistReserve, type Book, type Goal, type OutCat, type Tx, type Wish } from '../lib/data'
 
 type Props = {
   book: Book
   month: string // YYYY-MM
   txs: Tx[] // this month's entries
+  allTxs: Tx[] // every entry in the book, for goal balances
+  goals: Goal[]
+  wishes: Wish[]
   onBook: (patch: Partial<Book>) => void
 }
 
@@ -37,10 +40,16 @@ function MoneyInput({ value, onCommit, label }: { value: number; onCommit: (n: n
   )
 }
 
-export default function BudgetPlan({ book, month, txs, onBook }: Props) {
-  const spentBy = (c: OutCat) => txs.filter((t) => t.type === 'out' && t.category === c).reduce((s, t) => s + t.amount, 0)
+export default function BudgetPlan({ book, month, txs, allTxs, goals, wishes, onBook }: Props) {
+  // Goal-funded parts of purchases were saved for earlier, so they don't use up a category plan
+  const spentBy = (c: OutCat) => txs.filter((t) => t.type === 'out' && t.category === c).reduce((s, t) => s + t.amount - Math.min(t.goalFunded ?? 0, t.amount), 0)
   const income = txs.filter((t) => t.type === 'in').reduce((s, t) => s + t.amount, 0)
-  const saved = txs.filter((t) => t.type === 'save').reduce((s, t) => s + t.amount, 0)
+  const saved = savedInto(txs)
+  const fromGoals = takenFromGoals(txs)
+  // Wishlist items planned for this month (only this month or later)
+  const reserve = month >= monthKey(todayISO()) ? wishlistReserve(wishes, goals, allTxs, month) : { total: 0, byCategory: {} as Partial<Record<OutCat, number>> }
+  // What goals with a target date need saved each month
+  const goalsNeed = Math.ceil(goalsMonthlyNeed(goals, allTxs, month))
   const needs = txs.filter((t) => t.type === 'out' && t.need === 'need').reduce((s, t) => s + t.amount, 0)
   const wants = txs.filter((t) => t.type === 'out' && t.need !== 'need').reduce((s, t) => s + t.amount, 0)
   const planned = CATEGORIES.reduce((s, c) => s + (book.categoryBudgets[c.id as OutCat] ?? 0), 0)
@@ -65,17 +74,50 @@ export default function BudgetPlan({ book, month, txs, onBook }: Props) {
           </h2>
           <p className="text-sm text-muted">
             Planned <span className="font-semibold text-ink">{moneyWhole(planned)}</span>, spent <span className="font-semibold text-ink">{moneyWhole(spent)}</span>
+            {reserve.total > 0 && (
+              <>
+                , wishlist <span className="font-semibold text-ink">{moneyWhole(reserve.total)}</span>
+              </>
+            )}
           </p>
         </div>
-        <p className="mt-1 text-sm text-muted">Set how much you plan to spend in each category. Bars fill as you spend.</p>
+        <p className="mt-1 text-sm text-muted">Set how much you plan to spend in each category. Bars fill as you spend; striped parts are wishlist plans.</p>
+
+        {/* Category plans and the monthly budget should agree */}
+        {planned > book.monthlyBudget ? (
+          <div role="alert" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-[#fde8e6] p-4 text-sm text-critical">
+            <p className="flex items-start gap-2">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <span>
+                Your category plans add up to <b>{moneyWhole(planned)}</b>, which is <b>{moneyWhole(planned - book.monthlyBudget)} more</b> than your {moneyWhole(book.monthlyBudget)} monthly budget. Raise the budget or trim a plan below.
+              </span>
+            </p>
+            <button type="button" onClick={() => onBook({ monthlyBudget: planned })} className="rounded-full bg-critical px-4 py-2 font-semibold text-white">
+              Raise budget to {moneyWhole(planned)}
+            </button>
+          </div>
+        ) : planned < book.monthlyBudget ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-wash p-4 text-sm">
+            <p>
+              <b>{moneyWhole(book.monthlyBudget - planned)}</b> of your {moneyWhole(book.monthlyBudget)} monthly budget isn’t planned for any category yet.
+            </p>
+            <button type="button" onClick={() => onBook({ monthlyBudget: planned })} className="rounded-full bg-ink px-4 py-2 font-semibold text-white">
+              Lower budget to {moneyWhole(planned)}
+            </button>
+          </div>
+        ) : null}
 
         <ul className="mt-5 space-y-3">
           {CATEGORIES.map((c, i) => {
             const id = c.id as OutCat
             const plan = book.categoryBudgets[id] ?? 0
             const s = spentBy(id)
+            const wish = reserve.byCategory[id] ?? 0
             const pct = plan > 0 ? Math.min(s / plan, 1) : s > 0 ? 1 : 0
+            const wishPct = plan > 0 ? Math.min(wish / plan, 1 - pct) : 0
             const over = plan > 0 && s > plan
+            // Warn before a planned purchase would push the category past its plan
+            const willOver = plan > 0 && !over && s + wish > plan
             const Icon = c.icon
             return (
               <motion.li key={c.id} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 + i * 0.04, duration: 0.4 }} className="rounded-2xl p-2 transition-colors hover:bg-wash">
@@ -99,27 +141,33 @@ export default function BudgetPlan({ book, month, txs, onBook }: Props) {
                         `${money(s)} spent, no plan yet`
                       )}
                     </p>
+                    {wish > 0 && (
+                      <p className={`flex items-center gap-1 text-xs ${willOver ? 'font-medium text-[#8a5d00]' : 'text-muted'}`}>
+                        <Gift className="size-3.5" aria-hidden />
+                        {money(wish)} planned on your wishlist
+                        {willOver && `, which takes it ${money(s + wish - plan)} over plan`}
+                      </p>
+                    )}
                   </div>
                   <MoneyInput value={plan} onCommit={(n) => setCat(id, n)} label={`${c.label} budget`} />
                 </div>
-                <div className="mt-2 ml-12 h-2 rounded-full bg-line" aria-hidden>
+                <div className="mt-2 ml-12 flex h-2 gap-[2px] rounded-full bg-line" aria-hidden>
                   <motion.div className="h-full rounded-full" style={{ background: over ? '#d03b3b' : c.color }} initial={{ width: 0 }} animate={{ width: `${pct * 100}%` }} transition={{ duration: 0.9, delay: 0.2 + i * 0.04, ease }} />
+                  {wishPct > 0 && (
+                    <motion.div
+                      className="h-full rounded-full"
+                      style={{ background: `repeating-linear-gradient(135deg, ${willOver ? '#eda100' : c.color} 0 4px, transparent 4px 7px)` }}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${wishPct * 100}%` }}
+                      transition={{ duration: 0.9, delay: 0.35 + i * 0.04, ease }}
+                    />
+                  )}
                 </div>
               </motion.li>
             )
           })}
         </ul>
 
-        {planned !== book.monthlyBudget && (
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-wash p-4 text-sm">
-            <p>
-              Your plan adds up to <b>{moneyWhole(planned)}</b>, but your monthly budget is <b>{moneyWhole(book.monthlyBudget)}</b>.
-            </p>
-            <button type="button" onClick={() => onBook({ monthlyBudget: planned })} className="rounded-full bg-ink px-4 py-2 font-semibold text-white">
-              Use {moneyWhole(planned)} as monthly budget
-            </button>
-          </div>
-        )}
       </motion.section>
 
       <div className="flex flex-col gap-4 lg:col-span-5 lg:gap-5">
@@ -144,17 +192,43 @@ export default function BudgetPlan({ book, month, txs, onBook }: Props) {
             />
           </div>
           <p className="mt-3 flex items-center gap-2 text-sm">
-            {saved >= book.monthlySavingsGoal && book.monthlySavingsGoal > 0 ? (
+            {saved >= book.monthlySavingsGoal && book.monthlySavingsGoal > 0 && saved >= goalsNeed ? (
               <>
                 <Check className="size-4 text-leaf" aria-hidden /> Goal reached. Nice work.
               </>
+            ) : saved >= book.monthlySavingsGoal && book.monthlySavingsGoal > 0 ? (
+              <span className="text-ink-soft">You hit this goal, but your dated goals need {moneyWhole(goalsNeed - saved)} more this month.</span>
             ) : (
               <span className="text-ink-soft">{moneyWhole(Math.max(book.monthlySavingsGoal - saved, 0))} more to reach it this month.</span>
             )}
           </p>
+
+          {/* Goals with a target date need a set amount each month */}
+          {goalsNeed > 0 && (
+            <div className={`mt-3 rounded-xl p-3 text-sm ${goalsNeed > book.monthlySavingsGoal ? 'bg-gold/15 text-[#6b4a00]' : 'bg-wash text-ink-soft'}`}>
+              <p className="flex items-start gap-2">
+                <Target className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <span>
+                  Your goals with a target date need <b>{moneyWhole(goalsNeed)} a month</b> to stay on schedule
+                  {goalsNeed > book.monthlySavingsGoal ? `, ${moneyWhole(goalsNeed - book.monthlySavingsGoal)} more than this monthly goal.` : '. This monthly goal covers it.'}
+                </span>
+              </p>
+              {goalsNeed > book.monthlySavingsGoal && (
+                <button type="button" onClick={() => onBook({ monthlySavingsGoal: goalsNeed })} className="mt-2 rounded-full bg-ink px-3.5 py-1.5 text-xs font-semibold text-white">
+                  Set monthly goal to {moneyWhole(goalsNeed)}
+                </button>
+              )}
+            </div>
+          )}
+
           <p className="mt-3 border-t border-line pt-3 text-sm text-muted">
-            Money in <b className="text-ink">{moneyWhole(income)}</b>, spent <b className="text-ink">{moneyWhole(spent)}</b>, saved <b className="text-ink">{moneyWhole(saved)}</b>. Left over{' '}
-            <b className={income - spent - saved >= 0 ? 'text-leaf' : 'text-critical'}>{moneyWhole(income - spent - saved)}</b>.
+            Money in <b className="text-ink">{moneyWhole(income)}</b>, spent <b className="text-ink">{moneyWhole(spent)}</b>, saved <b className="text-ink">{moneyWhole(saved)}</b>
+            {fromGoals > 0 && (
+              <>
+                , taken from goals <b className="text-ink">{moneyWhole(fromGoals)}</b>
+              </>
+            )}
+            . Left over <b className={income - spent - saved + fromGoals >= 0 ? 'text-leaf' : 'text-critical'}>{moneyWhole(income - spent - saved + fromGoals)}</b>.
           </p>
         </motion.section>
 

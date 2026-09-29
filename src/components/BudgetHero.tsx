@@ -8,8 +8,14 @@ type Props = {
   period: Period
   anchor: string
   out: number
+  /** Spending that uses up the budget (goal-funded parts left out) */
+  budgetOut: number
   inn: number
   saved: number
+  /** Money taken back out of goals to pay for things */
+  fromGoals: number
+  /** This month's wishlist, set aside from the budget */
+  reserved: number
   count: number
   budget: number | null
   /** Which budget the bar uses; only these two are directly editable */
@@ -20,7 +26,7 @@ type Props = {
 
 const dayCount = (a: string, b: string) => Math.round((fromISO(b).getTime() - fromISO(a).getTime()) / 86400000) + 1
 
-export default function BudgetHero({ period, anchor, out, inn, saved, count, budget, budgetKind, onBudget, pulse }: Props) {
+export default function BudgetHero({ period, anchor, out, budgetOut, inn, saved, fromGoals, reserved, count, budget, budgetKind, onBudget, pulse }: Props) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(String(budget ?? ''))
   const inputRef = useRef<HTMLInputElement>(null)
@@ -51,13 +57,20 @@ export default function BudgetHero({ period, anchor, out, inn, saved, count, bud
   const elapsed = isCurrent ? dayCount(r.start, today) : today > r.end ? total : 0
   const pace = elapsed / total
   const daysLeft = total - elapsed
-  const net = inn - out - saved // what's left after spending and saving
+  // What's left after spending and saving; money taken back out of goals comes back in
+  const net = inn - out - saved + fromGoals
 
-  const left = budget !== null ? budget - out : 0
+  const left = budget !== null ? budget - budgetOut : 0
   const over = budget !== null && left < 0
-  const pct = budget ? Math.min(out / budget, 1) : 0
-  const aheadOfPace = isCurrent && period !== 'day' && pct > pace + 0.05
-  const perDay = daysLeft > 0 ? Math.max(left, 0) / daysLeft : 0
+  const pct = budget ? Math.min(budgetOut / budget, 1) : 0
+  // Planned wishlist money for this month, shown as a striped part of the bar
+  const held = budget && !over ? Math.min(reserved, left) : 0
+  const heldPct = budget ? held / budget : 0
+  const free = left - held
+  // The status follows the bar: caution as soon as spending passes the Today marker
+  const aheadOfPace = isCurrent && period !== 'day' && !over && pct > pace + 0.01
+  const perDay = daysLeft > 0 ? Math.max(free, 0) / daysLeft : 0
+  const funded = out - budgetOut
 
   // Shake once the moment spending crosses the budget
   const wasOver = useRef(over)
@@ -84,6 +97,12 @@ export default function BudgetHero({ period, anchor, out, inn, saved, count, bud
       <p id="hero-total" ref={totalRef} className="mt-1 inline-block origin-left text-[clamp(3rem,9vw,6.2rem)] leading-none font-extrabold tracking-[-0.04em] text-white">
         <AnimatedMoney value={out} />
       </p>
+      {funded > 0 && (
+        <p className="mt-2 flex items-center gap-2 text-sm text-cream/70">
+          <PiggyBank className="size-4 text-lime" aria-hidden />
+          {moneyWhole(funded)} of this came from your savings goals, so it doesn’t count against your budget.
+        </p>
+      )}
 
       {/* Money in and net, side by side */}
       <div className="mt-5 flex flex-wrap gap-x-8 gap-y-3">
@@ -128,17 +147,34 @@ export default function BudgetHero({ period, anchor, out, inn, saved, count, bud
                   <TriangleAlert className="size-5" aria-hidden />
                   Over by {moneyWhole(-left)}
                 </p>
+              ) : reserved > left ? (
+                <>
+                  <p className="text-lg">
+                    <span className="font-semibold text-lime">{moneyWhole(left)} left</span>
+                    <span className="text-cream/65"> of your {budgetName.toLowerCase()}</span>
+                  </p>
+                  <p className="mt-0.5 flex items-center gap-1.5 text-sm text-gold">
+                    <TriangleAlert className="size-4" aria-hidden />
+                    This month’s wishlist needs {moneyWhole(reserved)}, {moneyWhole(reserved - left)} more than what’s left.
+                  </p>
+                </>
+              ) : held > 0 ? (
+                <p className="text-lg">
+                  <span className="font-semibold text-lime">{moneyWhole(free)} free to spend</span>
+                  <span className="text-cream/65"> after {moneyWhole(held)} set aside for this month’s wishlist</span>
+                </p>
               ) : (
                 <p className="text-lg">
                   <span className="font-semibold text-lime">{moneyWhole(left)} left</span>
                   <span className="text-cream/65"> of your {budgetName.toLowerCase()}</span>
                 </p>
               )}
-              {isCurrent && !over && daysLeft > 0 && period !== 'day' && (
+              {isCurrent && !over && free > 0 && daysLeft > 0 && period !== 'day' && (
                 <p className="text-sm text-cream/60">
                   That’s {moneyWhole(perDay)} a day for the next {daysLeft} {daysLeft === 1 ? 'day' : 'days'}
                 </p>
               )}
+              {!isCurrent && held > 0 && <p className="text-sm text-cream/60">Wishlist items planned for this month are set aside from the budget.</p>}
             </div>
 
             <div className="flex items-center gap-2 text-sm text-cream/70">
@@ -194,13 +230,23 @@ export default function BudgetHero({ period, anchor, out, inn, saved, count, bud
             </div>
           </div>
 
-          <div ref={barRef} className="relative mt-4 h-4 rounded-full bg-white/10" role="meter" aria-valuemin={0} aria-valuemax={budget} aria-valuenow={Math.round(out)} aria-label="Budget used">
+          <div ref={barRef} className="relative mt-4 h-4 rounded-full bg-white/10" role="meter" aria-valuemin={0} aria-valuemax={budget} aria-valuenow={Math.round(budgetOut)} aria-label="Budget used">
             <motion.div
               className={`shimmer absolute inset-y-0 left-0 overflow-hidden rounded-full transition-colors duration-700 ${over ? 'bg-critical' : aheadOfPace ? 'bg-gold' : 'bg-lime'}`}
               initial={{ width: 0 }}
               animate={{ width: `${pct * 100}%` }}
               transition={{ duration: 1.3, delay: 0.35, ease: [0.16, 1, 0.3, 1] }}
             />
+            {/* Set aside for the wishlist: striped, right after what's been spent */}
+            {heldPct > 0 && (
+              <motion.div
+                className="absolute inset-y-0 rounded-r-full bg-[repeating-linear-gradient(135deg,rgba(201,242,107,0.55)_0_5px,rgba(201,242,107,0.18)_5px_10px)]"
+                initial={{ left: 0, width: 0 }}
+                animate={{ left: `calc(${pct * 100}% + 2px)`, width: `max(calc(${heldPct * 100}% - 2px), 0px)` }}
+                transition={{ duration: 1.3, delay: 0.5, ease: [0.16, 1, 0.3, 1] }}
+                title={`${moneyWhole(held)} set aside for this month’s wishlist`}
+              />
+            )}
             {isCurrent && period !== 'day' && (
               <motion.div
                 className="absolute -top-1.5 -bottom-1.5 w-0.5 rounded-full bg-white"

@@ -13,6 +13,8 @@ import Bills from './components/Bills'
 import Goals from './components/Goals'
 import ExpenseDialog from './components/ExpenseDialog'
 import ImportDialog from './components/ImportDialog'
+import BuyDialog from './components/BuyDialog'
+import CategoryManager from './components/CategoryManager'
 import SampleNotice from './components/SampleNotice'
 import Calculator from './components/Calculator'
 import CoinFlight, { type Flight } from './components/CoinFlight'
@@ -27,7 +29,12 @@ import {
   daysInMonth,
   defaultNeed,
   GOAL_COLORS,
+  CAT,
+  budgetSpend,
   goalSaved,
+  savedInto,
+  takenFromGoals,
+  wishlistReserve,
   goalsKey,
   markOldSample,
   newCategoryId,
@@ -245,6 +252,7 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
   const [dialog, setDialog] = useState<{ editing: Tx | null; amount?: number; type?: TxType; goalId?: string } | null>(null)
   const [calcOpen, setCalcOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [catsOpen, setCatsOpen] = useState(false)
   const [toast, setToast] = useState<ToastMsg | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const [flight, setFlight] = useState<Flight | null>(null)
@@ -259,8 +267,14 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
   const periodTx = useMemo(() => txs.filter((t) => inRange(t.date, range)), [txs, range.start, range.end]) // eslint-disable-line react-hooks/exhaustive-deps
   const out = periodTx.reduce((s, t) => (t.type === 'out' ? s + t.amount : s), 0)
   const inn = periodTx.reduce((s, t) => (t.type === 'in' ? s + t.amount : s), 0)
-  const saved = periodTx.reduce((s, t) => (t.type === 'save' ? s + t.amount : s), 0)
+  // Goal-funded purchases were saved for earlier, so only the rest uses up the budget
+  const budgetOut = budgetSpend(periodTx)
+  // Saving counts money put into goals; taking it back out to buy something isn't "unsaving" this month
+  const saved = savedInto(periodTx)
+  const fromGoals = takenFromGoals(periodTx)
   const isCurrent = inRange(todayISO(), range)
+  // This month's planned wishlist, set aside from the monthly budget (only for this month or later)
+  const reserved = period === 'month' && monthKey(anchor) >= monthKey(todayISO()) ? wishlistReserve(wishes, goals, txs, monthKey(anchor)).total : 0
 
   const dim = daysInMonth(monthKey(anchor))
   const budget =
@@ -360,15 +374,29 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
     notify(`${s.bill.name} marked paid`, () => setTxs((list) => list.filter((x) => x.id !== t.id)))
   }
 
-  const buyWish = (w: Wish) => {
-    const today = todayISO()
-    const buy: Tx = { id: uid(), type: 'out', amount: w.price, category: w.category, account: 'bank', note: w.name, date: today, createdAt: Date.now(), need: w.need, wishId: w.id }
-    const added: Tx[] = [buy]
+  const [buying, setBuying] = useState<Wish | null>(null)
+
+  const buyWish = (w: Wish, paid: { price: number; account: AccountId; date: string }) => {
+    setBuying(null)
     // Paying from a linked goal takes that money back out of savings
     const goal = goals.find((g) => g.id === w.goalId)
-    const available = goal ? goalSaved(goal.id, txs) : 0
-    if (goal && available > 0) {
-      added.push({ id: uid(), type: 'save', amount: -Math.min(available, w.price), category: 'savings', account: 'bank', note: `Used for ${w.name}`, date: today, createdAt: Date.now() - 1, goalId: goal.id })
+    const fromGoal = goal ? Math.min(Math.max(goalSaved(goal.id, txs), 0), paid.price) : 0
+    const buy: Tx = {
+      id: uid(),
+      type: 'out',
+      amount: paid.price,
+      category: w.category,
+      account: paid.account,
+      note: w.name,
+      date: paid.date,
+      createdAt: Date.now(),
+      need: w.need,
+      wishId: w.id,
+      ...(fromGoal > 0 ? { goalFunded: fromGoal } : {}),
+    }
+    const added: Tx[] = [buy]
+    if (goal && fromGoal > 0) {
+      added.push({ id: uid(), type: 'save', amount: -fromGoal, category: 'savings', account: paid.account, note: `Used for ${w.name}`, date: paid.date, createdAt: Date.now() - 1, goalId: goal.id })
     }
     setTxs((list) => [...list, ...added])
     setWishes((ws) => ws.map((x) => (x.id === w.id ? { ...x, boughtTxId: buy.id } : x)))
@@ -438,6 +466,37 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
     setCustomCategories(next)
     setCustomCats(next)
   }
+  const updateCategory = (c: CustomCategory) => {
+    const next = customCats.map((x) => (x.id === c.id ? c : x))
+    setCustomCategories(next)
+    setCustomCats(next)
+  }
+  /** Moves everything filed under a category (in every book) to another one, then deletes it */
+  const moveAndDeleteCategory = (id: CatId, to: CatId) => {
+    const move = <T extends { category: CatId }>(list: T[]): T[] => list.map((x) => (x.category === id ? { ...x, category: to } : x))
+    setTxs((l) => move(l))
+    setBills((l) => move(l) as Bill[])
+    setWishes((l) => move(l) as Wish[])
+    for (const b of books) {
+      if (b.id === book.id) continue
+      save(bookKey(b.id), move(loadTx(b.id)))
+      save(billsKey(b.id), move(load<Bill[]>(billsKey(b.id), [])))
+      save(wishKey(b.id), move(load<Wish[]>(wishKey(b.id), [])))
+    }
+    // Its budget plan joins the category it moved into
+    setBooks((bs) =>
+      bs.map((b) => {
+        const plans = { ...b.categoryBudgets } as Record<string, number>
+        if (plans[id]) plans[to] = (plans[to] ?? 0) + plans[id]
+        delete plans[id]
+        return { ...b, categoryBudgets: plans }
+      }),
+    )
+    const name = CAT[id]?.label ?? 'Category'
+    const into = CAT[to]?.label ?? 'another category'
+    removeCategory(id)
+    notify(`“${name}” deleted; its entries moved to ${into}`)
+  }
 
   const createGoal = (name: string, target: number) => {
     const g: Goal = { id: uid(), name, target, color: GOAL_COLORS[goals.length % GOAL_COLORS.length] }
@@ -495,6 +554,7 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
                 notify('Excel file downloaded')
               }}
               onImport={() => setImportOpen(true)}
+              onCategories={() => setCatsOpen(true)}
             />
             <motion.button
               type="button"
@@ -595,7 +655,21 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
             {tab === 'overview' && (
               <>
                 <div className="grid grid-cols-[minmax(0,1fr)] items-end gap-8 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] lg:gap-10">
-                  <BudgetHero period={period} anchor={anchor} out={out} inn={inn} saved={saved} count={periodTx.length} budget={budget} budgetKind={budgetKind} onBudget={(n) => patchBook(period === 'week' ? { weeklyBudget: n } : { monthlyBudget: n })} pulse={pulse} />
+                  <BudgetHero
+                    period={period}
+                    anchor={anchor}
+                    out={out}
+                    budgetOut={budgetOut}
+                    inn={inn}
+                    saved={saved}
+                    fromGoals={fromGoals}
+                    reserved={reserved}
+                    count={periodTx.length}
+                    budget={budget}
+                    budgetKind={budgetKind}
+                    onBudget={(n) => patchBook(period === 'week' ? { weeklyBudget: n } : { monthlyBudget: n })}
+                    pulse={pulse}
+                  />
                   <Accounts txs={periodTx} active={account} onPick={setAccount} />
                 </div>
                 <div className="mt-12 grid grid-cols-[minmax(0,1fr)] gap-4 [perspective:1400px] lg:grid-cols-12 lg:gap-5">
@@ -626,10 +700,10 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
                 </div>
               </>
             )}
-            {tab === 'plan' && <BudgetPlan book={book} month={monthKey(anchor)} txs={periodTx} onBook={patchBook} />}
+            {tab === 'plan' && <BudgetPlan book={book} month={monthKey(anchor)} txs={periodTx} allTxs={txs} goals={goals} wishes={wishes} onBook={patchBook} />}
             {tab === 'bills' && <Bills month={monthKey(anchor)} bills={bills} txs={txs} onBills={setBills} onPay={payBill} onUnpay={(t) => setTxs((list) => list.filter((x) => x.id !== t.id))} />}
             {tab === 'goals' && (
-              <Goals goals={goals} wishes={wishes} txs={txs} monthlySavingsGoal={book.monthlySavingsGoal} onGoals={setGoals} onWishes={setWishes} onAddMoney={(goalId) => openAdd({ type: 'save', goalId })} onBuy={buyWish} />
+              <Goals goals={goals} wishes={wishes} txs={txs} monthlySavingsGoal={book.monthlySavingsGoal} onGoals={setGoals} onWishes={setWishes} onAddMoney={(goalId) => openAdd({ type: 'save', goalId })} onBuy={setBuying} />
             )}
           </motion.main>
         </AnimatePresence>
@@ -677,10 +751,27 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
         onCreateGoal={createGoal}
         onCreateCategory={createCategory}
         onRemoveCategory={removeCategory}
+        onManageCategories={() => setCatsOpen(true)}
         categoryUse={categoryUse}
         onClose={() => setDialog(null)}
         onSave={saveTx}
       />
+
+      <CategoryManager
+        open={catsOpen}
+        categories={customCats}
+        categoryUse={categoryUse}
+        onUpdate={updateCategory}
+        onDelete={(id) => {
+          const name = CAT[id]?.label
+          removeCategory(id)
+          notify(`“${name}” deleted`)
+        }}
+        onMoveAndDelete={moveAndDeleteCategory}
+        onClose={() => setCatsOpen(false)}
+      />
+
+      <BuyDialog wish={buying} goals={goals} txs={txs} onClose={() => setBuying(null)} onConfirm={buyWish} />
 
       <ImportDialog
         open={importOpen}

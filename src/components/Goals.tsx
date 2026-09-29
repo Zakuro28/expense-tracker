@@ -6,8 +6,11 @@ import {
   CAT,
   CATEGORIES,
   GOAL_COLORS,
+  MAX_AMOUNT,
   fromISO,
   goalSaved,
+  goalUsed,
+  savedInto,
   monthKey,
   monthLabel,
   money,
@@ -67,11 +70,14 @@ function GoalForm({ initial, onSave, onCancel, count }: { initial?: Goal; onSave
       animate={{ opacity: 1, height: 'auto' }}
       exit={{ opacity: 0, height: 0 }}
       className="overflow-hidden"
+      noValidate
       onSubmit={(e) => {
         e.preventDefault()
         const t = Number(target.replace(/,/g, ''))
         if (!name.trim()) return setError('Name your goal, like “Emergency fund”.')
         if (!(t > 0)) return setError('Enter how much you want to save.')
+        if (t > MAX_AMOUNT) return setError(`Keep the goal under ${money(MAX_AMOUNT)}.`)
+        if (deadline && deadline < monthKey(todayISO())) return setError('Pick a month from now on for the target date.')
         onSave({ id: initial?.id ?? uid(), name: name.trim(), target: t, deadline: deadline || undefined, color: initial?.color ?? GOAL_COLORS[count % GOAL_COLORS.length] })
       }}
     >
@@ -116,11 +122,14 @@ function WishForm({ goals, onSave, onCancel }: { goals: Goal[]; onSave: (w: Wish
       animate={{ opacity: 1, height: 'auto' }}
       exit={{ opacity: 0, height: 0 }}
       className="overflow-hidden"
+      noValidate
       onSubmit={(e) => {
         e.preventDefault()
         const p = Number(price.replace(/,/g, ''))
         if (!name.trim()) return setError('What do you want to buy?')
         if (!(p > 0)) return setError('Enter the price.')
+        if (p > MAX_AMOUNT) return setError(`Keep the price under ${money(MAX_AMOUNT)}.`)
+        if (month < monthKey(todayISO())) return setError('Pick a month from now on.')
         onSave({ id: uid(), name: name.trim(), price: p, need, category, month, goalId: goalId || undefined })
       }}
     >
@@ -135,7 +144,7 @@ function WishForm({ goals, onSave, onCancel }: { goals: Goal[]; onSave: (w: Wish
         </label>
         <label className="block">
           <span className="text-sm text-muted">Planned for</span>
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={field} />
+          <input type="month" value={month} min={monthKey(todayISO())} onChange={(e) => setMonth(e.target.value)} className={field} />
         </label>
         <label className="block">
           <span className="text-sm text-muted">Category when bought</span>
@@ -190,7 +199,7 @@ export default function Goals({ goals, wishes, txs, monthlySavingsGoal, onGoals,
   const [wishFilter, setWishFilter] = useState<Need | 'all'>('all')
 
   const thisMonth = monthKey(todayISO())
-  const savedThisMonth = txs.filter((t) => t.type === 'save' && monthKey(t.date) === thisMonth).reduce((s, t) => s + t.amount, 0)
+  const savedThisMonth = savedInto(txs.filter((t) => monthKey(t.date) === thisMonth))
   const totalSaved = goals.reduce((s, g) => s + goalSaved(g.id, txs), 0)
 
   // Wishlist grouped by planned month, earliest first; bought items sink to the end
@@ -242,8 +251,12 @@ export default function Goals({ goals, wishes, txs, monthlySavingsGoal, onGoals,
             <AnimatePresence initial={false}>
               {goals.map((g, i) => {
                 const saved = goalSaved(g.id, txs)
-                const pct = saved / g.target
-                const left = Math.max(g.target - saved, 0)
+                // Money spent on what the goal was for still counts toward reaching it
+                const used = goalUsed(g.id, txs)
+                const usedFor = [...new Set(txs.filter((t) => t.type === 'save' && t.goalId === g.id && t.amount < 0).map((t) => t.note.replace(/^Used for /, '')))]
+                const pct = (saved + used) / g.target
+                const left = Math.max(g.target - saved - used, 0)
+                const spentOut = used > 0 && saved <= 0
                 const monthsLeft = g.deadline ? Math.max(monthsBetween(thisMonth, g.deadline) + 1, 1) : null
                 const linked = wishes.filter((w) => w.goalId === g.id && !w.boughtTxId)
                 return (
@@ -257,8 +270,13 @@ export default function Goals({ goals, wishes, txs, monthlySavingsGoal, onGoals,
                           {pct >= 1 && <span className="rounded-full bg-leaf/12 px-2 text-xs font-semibold text-leaf">Reached</span>}
                         </p>
                         <p className="text-sm">
-                          <b>{money(saved)}</b> <span className="text-muted">of {money(g.target)}</span>
+                          <b>{money(saved + used)}</b> <span className="text-muted">of {money(g.target)} saved</span>
                         </p>
+                        {used > 0 && (
+                          <p className="text-xs font-medium text-leaf">
+                            {money(used)} used for {usedFor.join(', ')}. {money(Math.max(saved, 0))} left in it.
+                          </p>
+                        )}
                         <p className="text-xs text-muted">
                           {pct >= 1
                             ? 'Goal reached.'
@@ -273,6 +291,16 @@ export default function Goals({ goals, wishes, txs, monthlySavingsGoal, onGoals,
                       <motion.button type="button" whileTap={{ scale: 0.95 }} onClick={() => onAddMoney(g.id)} className="flex items-center gap-1.5 rounded-full bg-lime px-4 py-2 text-sm font-bold text-note">
                         <PiggyBank className="size-4" /> Add money
                       </motion.button>
+                      {/* Its money went to what it was for: offer to close it */}
+                      {spentOut && linked.length === 0 && (
+                        <button
+                          type="button"
+                          onClick={() => onGoals(goals.filter((x) => x.id !== g.id))}
+                          className="flex items-center gap-1.5 rounded-full px-3.5 py-2 text-sm font-semibold text-ink-soft ring-1 ring-line hover:bg-wash"
+                        >
+                          <Check className="size-4 text-leaf" /> Close goal
+                        </button>
+                      )}
                       <span className="ml-auto flex gap-0.5 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
                         <button type="button" onClick={() => { setEditingGoal(g.id); setAddingGoal(false) }} aria-label={`Edit ${g.name}`} className="grid size-8 place-items-center rounded-full text-muted hover:bg-line hover:text-ink">
                           <Pencil className="size-4" />
@@ -328,9 +356,12 @@ export default function Goals({ goals, wishes, txs, monthlySavingsGoal, onGoals,
           <div className="mt-2">
             {byMonth.map((m) => (
               <div key={m} className="pt-3">
-                <h3 className="border-b border-line pb-2 text-sm font-semibold text-ink-soft">
+                <h3 className="flex flex-wrap items-center gap-x-2 border-b border-line pb-2 text-sm font-semibold text-ink-soft">
                   {monthLabel(m)}
-                  <span className="ml-2 font-normal text-muted">{money(shown.filter((w) => w.month === m && !w.boughtTxId).reduce((s, w) => s + w.price, 0))} planned</span>
+                  <span className="font-normal text-muted">{money(shown.filter((w) => w.month === m && !w.boughtTxId).reduce((s, w) => s + w.price, 0))} planned</span>
+                  {m < thisMonth && shown.some((w) => w.month === m && !w.boughtTxId) && (
+                    <span className="rounded-full bg-[#fde8e6] px-2 text-xs font-semibold text-critical">Overdue</span>
+                  )}
                 </h3>
                 <ul>
                   <AnimatePresence initial={false}>

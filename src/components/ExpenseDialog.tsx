@@ -5,6 +5,8 @@ import Calculator from './Calculator'
 import { evaluate, isExpression } from '../lib/calc'
 import {
   ACCOUNTS,
+  CATEGORY_NAME_MAX,
+  MAX_AMOUNT,
   CAT,
   CUSTOM_COLOR,
   CUSTOM_ICONS,
@@ -34,6 +36,7 @@ type Props = {
   onCreateGoal: (name: string, target: number) => Goal
   onCreateCategory: (c: Omit<CustomCategory, 'id'>) => CustomCategory
   onRemoveCategory: (id: CatId) => void
+  onManageCategories: () => void
   categoryUse: (id: CatId) => number
   onClose: () => void
   onSave: (t: Tx) => void
@@ -50,6 +53,7 @@ function NewCategory({ type, onCreate, onCancel }: { type: 'out' | 'in'; onCreat
   const create = () => {
     const name = label.trim()
     if (!name) return setError('Give the category a name.')
+    if (name.length > CATEGORY_NAME_MAX) return setError(`Keep the name to ${CATEGORY_NAME_MAX} characters or fewer.`)
     if (catsFor(type).some((c) => c.label.toLowerCase() === name.toLowerCase())) return setError(`You already have a “${name}” category.`)
     onCreate({ label: name, type, icon, need: type === 'out' ? need : undefined })
   }
@@ -69,11 +73,15 @@ function NewCategory({ type, onCreate, onCancel }: { type: 'out' | 'in'; onCreat
             create()
           }
         }}
-        maxLength={18}
+        maxLength={CATEGORY_NAME_MAX}
         placeholder={type === 'out' ? 'Pets, School, Load…' : 'Rental, Allowance…'}
         aria-label="Category name"
+        aria-describedby="cat-name-count"
         className={`${field} mt-2`}
       />
+      <p id="cat-name-count" className={`mt-1 text-right text-xs ${label.length >= CATEGORY_NAME_MAX ? 'font-semibold text-[#8a5d00]' : 'text-muted'}`}>
+        {label.length}/{CATEGORY_NAME_MAX} characters
+      </p>
       <p className="mt-3 text-xs text-muted">Icon</p>
       <div role="radiogroup" aria-label="Icon" className="mt-1 grid grid-cols-6 gap-1.5">
         {(Object.keys(CUSTOM_ICONS) as CustomIcon[]).map((k) => {
@@ -167,7 +175,7 @@ const TYPES: { id: TxType; label: string; icon: typeof ArrowUpRight; bg: string 
   { id: 'save', label: 'To savings', icon: PiggyBank, bg: 'bg-note-soft' },
 ]
 
-export default function ExpenseDialog({ open, editing, defaultDate, defaultAmount, defaultType, defaultGoalId, goals, onCreateGoal, onCreateCategory, onRemoveCategory, categoryUse, onClose, onSave }: Props) {
+export default function ExpenseDialog({ open, editing, defaultDate, defaultAmount, defaultType, defaultGoalId, goals, onCreateGoal, onCreateCategory, onRemoveCategory, onManageCategories, categoryUse, onClose, onSave }: Props) {
   const [making, setMaking] = useState<'category' | 'goal' | null>(null)
   const [type, setType] = useState<TxType>('out')
   const [need, setNeed] = useState<Need>('need')
@@ -226,6 +234,11 @@ export default function ExpenseDialog({ open, editing, defaultDate, defaultAmoun
     const n = computed
     if (n === null || n <= 0) {
       setError(amount.trim() ? 'That amount doesn’t add up. Check the math or clear it.' : 'Enter an amount greater than ₱0.')
+      amountRef.current?.focus()
+      return
+    }
+    if (n > MAX_AMOUNT) {
+      setError(`That’s more than ${money(MAX_AMOUNT)} for one entry. Check the amount, or split it into smaller entries.`)
       amountRef.current?.focus()
       return
     }
@@ -482,9 +495,7 @@ export default function ExpenseDialog({ open, editing, defaultDate, defaultAmoun
                 <p className="mt-2 flex flex-wrap items-center gap-x-2 text-xs text-muted">
                   <span className="inline-block size-2.5 rounded-full" style={{ background: CUSTOM_COLOR }} aria-hidden />
                   “{chosen.label}” is a category you added.
-                  {chosenUse > 0 ? (
-                    <span>It’s used by {chosenUse} {chosenUse === 1 ? 'item' : 'items'}, so it stays.</span>
-                  ) : (
+                  {chosenUse === 0 && (
                     <button
                       type="button"
                       onClick={() => {
@@ -496,6 +507,9 @@ export default function ExpenseDialog({ open, editing, defaultDate, defaultAmoun
                       <Trash2 className="size-3" aria-hidden /> Remove it
                     </button>
                   )}
+                  <button type="button" onClick={onManageCategories} className="font-semibold text-leaf hover:underline">
+                    Rename or manage categories
+                  </button>
                 </p>
               )}
 
