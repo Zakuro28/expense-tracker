@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from 'motion/react'
+import { DrawIcon, Interactions, Magnetic } from './components/fx'
 import { ChevronLeft, ChevronRight, ClipboardList, LayoutDashboard, Plus, Receipt, Target, X } from 'lucide-react'
 import Guilloche from './components/Guilloche'
 import AuthScreen from './components/AuthScreen'
@@ -108,6 +109,13 @@ const reveal = (delay: number) => ({
 })
 
 type Tab = 'overview' | 'plan' | 'bills' | 'goals'
+// Page content slides in from the side it came from; the leaving page gets the same direction through AnimatePresence's custom
+const PAGE = {
+  enter: (d: number) => ({ opacity: 0, x: d * 90, y: d ? 0 : 16, filter: 'blur(8px)' }),
+  center: { opacity: 1, x: 0, y: 0, filter: 'blur(0px)' },
+  leave: (d: number) => ({ opacity: 0, x: d * -90, filter: 'blur(8px)' }),
+}
+
 const TABS: { id: Tab; label: string; icon: typeof Target }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'plan', label: 'Budget plan', icon: ClipboardList },
@@ -534,8 +542,16 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
   const label = periodLabel(viewPeriod, anchor)
   const viewKey = `${tab}-${viewPeriod}-${range.start}-${book.id}`
 
+  // Tabs slide in from the side they sit on
+  const pickTab = (id: Tab) => {
+    if (id === tab) return
+    setDir(TABS.findIndex((t) => t.id === id) > TABS.findIndex((t) => t.id === tab) ? 1 : -1)
+    setTab(id)
+  }
+
   return (
     <>
+      <Interactions />
       <div className="mx-auto max-w-6xl px-4 pt-5 pb-28 sm:px-6 sm:pt-7">
         {/* Top bar */}
         <header className="flex items-center gap-2 sm:gap-3">
@@ -556,6 +572,7 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
               onImport={() => setImportOpen(true)}
               onCategories={() => setCatsOpen(true)}
             />
+            <Magnetic className="hidden sm:block" strength={0.25}>
             <motion.button
               type="button"
               onClick={() => openAdd()}
@@ -570,6 +587,7 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
               Add
               <kbd className="ml-1 rounded-md bg-note/12 px-1.5 text-xs font-semibold">N</kbd>
             </motion.button>
+            </Magnetic>
             <UserMenu user={user} onSignIn={onSignIn} onLogout={onLogout} onDeleteAccount={onDeleteAccount} />
           </div>
         </header>
@@ -585,11 +603,13 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
                     key={t.id}
                     role="tab"
                     aria-selected={tab === t.id}
-                    onClick={() => setTab(t.id)}
+                    onClick={() => pickTab(t.id)}
                     className={`relative z-10 flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold whitespace-nowrap transition-colors ${tab === t.id ? 'text-note' : 'text-cream/75 hover:text-white'}`}
                   >
                     {tab === t.id && <motion.span layoutId="main-tab" className="absolute inset-0 -z-10 rounded-full bg-lime" transition={{ type: 'spring', stiffness: 420, damping: 34 }} />}
-                    <Icon className="size-4" aria-hidden />
+                    <DrawIcon replay={tab === t.id}>
+                      <Icon className="size-4" aria-hidden />
+                    </DrawIcon>
                     {t.label}
                   </button>
                 )
@@ -645,11 +665,15 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
         <AnimatePresence mode="wait" initial={false} custom={dir}>
           <motion.main
             key={viewKey}
-            initial={{ opacity: 0, x: dir * 90, y: dir ? 0 : 16, filter: 'blur(8px)' }}
-            animate={{ opacity: 1, x: 0, y: 0, filter: 'blur(0px)' }}
-            exit={{ opacity: 0, x: dir * -90, filter: 'blur(8px)' }}
+            custom={dir}
+            variants={PAGE}
+            initial="enter"
+            animate="center"
+            exit="leave"
             transition={{ duration: 0.4, ease }}
-            onAnimationComplete={() => setDir(0)}
+            onAnimationComplete={(name) => {
+              if (name === 'center') setDir(0)
+            }}
             className="mt-10"
           >
             {tab === 'overview' && (
@@ -736,7 +760,7 @@ function Tracker({ user, onSignIn, onLogout, onDeleteAccount }: { user: PublicUs
       </div>
 
       {/* Floating add button on phones */}
-      <motion.button type="button" onClick={() => openAdd()} whileTap={{ scale: 0.92 }} aria-label="Add entry" className="fixed right-5 bottom-5 z-40 grid size-15 place-items-center rounded-full bg-lime text-note shadow-[0_14px_40px_-8px_rgba(0,0,0,0.5)] sm:hidden">
+      <motion.button type="button" onClick={() => openAdd()} whileTap={{ scale: 0.92 }} aria-label="Add entry" className="fab-pulse fixed right-5 bottom-5 z-40 grid size-15 place-items-center rounded-full bg-lime text-note shadow-[0_14px_40px_-8px_rgba(0,0,0,0.5)] sm:hidden">
         <Plus className="size-7" strokeWidth={2.6} />
       </motion.button>
 

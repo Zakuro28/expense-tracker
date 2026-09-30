@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { AnimatePresence, motion } from 'motion/react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { AnimatePresence, motion, useMotionValue, useTransform } from 'motion/react'
 import { ListFilter, Pencil, Plus, Receipt, Search, Trash2, X } from 'lucide-react'
 import { ACC, ACCOUNTS, CAT, CATEGORIES, INCOME_CATEGORIES, dayHeading, money, type AccountId, type CatId, type Goal, type Tx, type TxType } from '../lib/data'
 
@@ -45,8 +45,9 @@ export default function Transactions(p: Props) {
   }, [filtered])
 
   // Show the latest week first; more on request. Reset when the filters change.
-  const [limit, setLimit] = useState(7)
-  useEffect(() => setLimit(7), [query, typeFilter, category, account, txs])
+  const filterKey = [query, typeFilter, category, account].join('|')
+  const [more, setMore] = useState<{ key: string; txs: Tx[]; n: number }>({ key: filterKey, txs, n: 7 })
+  const limit = more.key === filterKey && more.txs === txs ? more.n : 7
   const visible = groups.slice(0, limit)
 
   const filtering = Boolean(query || typeFilter || category || account)
@@ -150,12 +151,20 @@ export default function Transactions(p: Props) {
         </div>
       ) : (
         <div className="mt-4">
-          <AnimatePresence initial={false}>
-            {visible.map(([date, items]) => {
+          <AnimatePresence>
+            {visible.map(([date, items], gi) => {
               const dayOut = items.filter((t) => t.type === 'out').reduce((s, t) => s + t.amount, 0)
               const dayIn = items.filter((t) => t.type === 'in').reduce((s, t) => s + t.amount, 0)
               return (
-                <motion.div key={date} layout="position" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="pt-3">
+                <motion.div
+                  key={date}
+                  layout="position"
+                  initial={{ opacity: 0, y: 18 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1], delay: Math.min(gi, 6) * 0.06 }}
+                  className="pt-3"
+                >
                   <div className="flex items-baseline justify-between border-b border-line pb-2 text-sm">
                     <h3 className="font-semibold text-ink-soft">{dayHeading(date)}</h3>
                     <span className="num text-muted">
@@ -178,7 +187,7 @@ export default function Transactions(p: Props) {
             <motion.button
               type="button"
               layout
-              onClick={() => setLimit((l) => l + 7)}
+              onClick={() => setMore({ key: filterKey, txs, n: limit + 7 })}
               whileTap={{ scale: 0.98 }}
               className="mt-4 w-full rounded-2xl border border-dashed border-line py-3 font-semibold text-ink-soft transition-colors hover:border-leaf hover:bg-wash hover:text-ink"
             >
@@ -201,6 +210,11 @@ function Row({ t, goals, highlight, onEdit, onDelete }: { t: Tx; goals: Goal[]; 
   const title = t.note || goal?.name || c.label
   const withdrawal = t.type === 'save' && t.amount < 0 // money taken back out of a goal
   const sign = t.type === 'in' || withdrawal ? '+' : '−'
+  // Phones get swipe-to-delete; mice keep the hover buttons
+  const [touch] = useState(() => window.matchMedia('(pointer: coarse)').matches)
+  // The red Delete layer only shows once the row starts sliding
+  const x = useMotionValue(0)
+  const reveal = useTransform(x, [-30, -1, 0], [1, 1, 0])
 
   return (
     <motion.li
@@ -209,9 +223,25 @@ function Row({ t, goals, highlight, onEdit, onDelete }: { t: Tx; goals: Goal[]; 
       animate={{ opacity: 1, height: 'auto', y: 0 }}
       exit={{ opacity: 0, height: 0, x: 80, backgroundColor: 'rgba(208,59,59,0.12)' }}
       transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-      className="overflow-hidden rounded-2xl"
+      className="relative overflow-hidden rounded-2xl"
     >
-      <div className={`group flex items-center gap-3 rounded-2xl px-2 py-2.5 transition-colors hover:bg-wash ${highlight ? 'just-added' : ''}`}>
+      {touch && (
+        <motion.span style={{ opacity: reveal }} className="absolute inset-y-0 right-0 flex w-full items-center justify-end gap-2 rounded-2xl bg-critical pr-5 text-sm font-semibold text-white" aria-hidden>
+          <Trash2 className="size-4.5" /> Delete
+        </motion.span>
+      )}
+      <motion.div
+        style={{ x }}
+        drag={touch ? 'x' : false}
+        dragDirectionLock
+        dragConstraints={{ left: -160, right: 0 }}
+        dragElastic={{ left: 0.2, right: 0 }}
+        dragSnapToOrigin
+        onDragEnd={(_, info) => {
+          if (info.offset.x < -110) onDelete(t)
+        }}
+        className={`group relative flex items-center gap-3 rounded-2xl bg-card px-2 py-2.5 transition-colors hover:bg-wash ${highlight ? 'just-added' : ''}`}
+      >
         <span
           className="grid size-10 shrink-0 place-items-center rounded-2xl text-white transition-transform duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] group-hover:scale-110 group-hover:-rotate-6"
           style={{ background: goal?.color ?? c.color }}
@@ -246,7 +276,7 @@ function Row({ t, goals, highlight, onEdit, onDelete }: { t: Tx; goals: Goal[]; 
             <Trash2 className="size-4" />
           </button>
         </span>
-      </div>
+      </motion.div>
     </motion.li>
   )
 }

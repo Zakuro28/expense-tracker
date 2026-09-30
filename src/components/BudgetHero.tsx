@@ -34,11 +34,8 @@ export default function BudgetHero({ period, anchor, out, budgetOut, inn, saved,
   const barRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (editing) {
-      setDraft(String(budget ?? ''))
-      setTimeout(() => inputRef.current?.select(), 30)
-    }
-  }, [editing, budget])
+    if (editing) setTimeout(() => inputRef.current?.select(), 30)
+  }, [editing])
 
   // The total swells and glows when a new entry lands in it
   useEffect(() => {
@@ -215,7 +212,10 @@ export default function BudgetHero({ period, anchor, out, budgetOut, inn, saved,
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      onClick={() => setEditing(true)}
+                      onClick={() => {
+                        setDraft(String(budget ?? ''))
+                        setEditing(true)
+                      }}
                       className="group flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 font-semibold text-white transition-colors hover:bg-white/15"
                     >
                       {moneyWhole(budget)}
@@ -254,7 +254,7 @@ export default function BudgetHero({ period, anchor, out, budgetOut, inn, saved,
                 animate={{ left: `${pace * 100}%`, opacity: 1 }}
                 transition={{ duration: 1.1, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
               >
-                <span className="absolute top-full left-1/2 mt-2 -translate-x-1/2 text-xs whitespace-nowrap text-cream/60">Today</span>
+                <span className={`absolute top-full mt-2 text-xs whitespace-nowrap text-cream/60 ${pace > 0.9 ? 'right-0' : pace < 0.1 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>Today</span>
               </motion.div>
             )}
           </div>
